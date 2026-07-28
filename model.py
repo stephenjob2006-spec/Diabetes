@@ -1,309 +1,614 @@
-import os
-import pickle
-import sys
-import warnings
-import logging
-from typing import Any
-
+from matplotlib.pylab import number
 import streamlit as st
 from PIL import Image
-from sklearn.exceptions import InconsistentVersionWarning
-import pandas as pd
-import numpy as np
+import pickle
 
-MODEL_FILE = "model.save"
-SCALER_FILE = "scaler.save"
-GENDER_ENCODER_FILE = "gender.save"
-SMOKING_ENCODER_FILE = "smoking.save"
-APP_IMAGE_FILE = "diabetes.jfif"
-
-SMOKING_HISTORY_OPTIONS = [
-    "never",
-    "no info",
-    "current",
-    "former",
-    "ever",
-    "not current",
-]
-
-
-def ensure_legacy_sklearn_loss_module() -> None:
-    """Inject compatibility module for pickled legacy sklearn estimators."""
-    if "_loss" not in sys.modules:
-        try:
-            import sklearn._loss._loss as loss_mod  # type: ignore
-            sys.modules["_loss"] = loss_mod
-        except Exception:
-            pass
-
-
-def load_pickle(path: str) -> Any:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Required file not found: {path}")
-    ensure_legacy_sklearn_loss_module()
-    with open(path, "rb") as file:
-        return pickle.load(file)
-
-
-@st.cache_resource
-def load_model_resources() -> tuple[Any, Any, Any, Any]:
-    model = load_pickle(MODEL_FILE)
-    scaler = load_pickle(SCALER_FILE)
-    gender_encoder = load_pickle(GENDER_ENCODER_FILE)
-    smoking_encoder = load_pickle(SMOKING_ENCODER_FILE)
-    return model, scaler, gender_encoder, smoking_encoder
-
-
-def load_app_image():
-    if not os.path.exists(APP_IMAGE_FILE):
-        return None
-
-    try:
-        return Image.open(APP_IMAGE_FILE)
-    except Exception:
-        return None
-
-
-def encode_label(encoder: Any, value: str, label_name: str) -> int:
-    if not hasattr(encoder, "classes_"):
-        raise ValueError(f"Invalid encoder for {label_name}")
-    if value not in encoder.classes_:
-        raise ValueError(
-            f"Unknown {label_name} value '{value}'. Allowed values: {', '.join(map(str, encoder.classes_))}"
-        )
-    return int(encoder.transform([value])[0])
-
-
-SAMPLE_INPUTS = [
-    {
-        "label": "Low-risk healthy adult",
-        "gender": "Female",
-        "age": 28,
-        "hypertension": 0,
-        "heart_disease": 0,
-        "smoking_history": "never",
-        "bmi": 22.0,
-        "hba1c": 5.2,
-        "blood_glucose": 90.0,
-    },
-    {
-        "label": "Higher-risk senior",
-        "gender": "Male",
-        "age": 65,
-        "hypertension": 1,
-        "heart_disease": 1,
-        "smoking_history": "ever",
-        "bmi": 31.0,
-        "hba1c": 8.1,
-        "blood_glucose": 185.0,
-    },
-    {
-        "label": "Borderline metabolic risk",
-        "gender": "Female",
-        "age": 52,
-        "hypertension": 1,
-        "heart_disease": 0,
-        "smoking_history": "former",
-        "bmi": 28.5,
-        "hba1c": 6.7,
-        "blood_glucose": 140.0,
-    },
-]
-
-
-def validate_inputs(
-    age: int,
-    bmi: float,
-    hba1c: float,
-    blood_glucose: float,
-) -> None:
-    if not 0 <= age <= 120:
-        raise ValueError("Age must be between 0 and 120.")
-    if not 0.0 <= bmi <= 100.0:
-        raise ValueError("BMI must be between 0.0 and 100.0.")
-    if not 0.0 <= hba1c <= 15.0:
-        raise ValueError("HbA1c must be between 0.0 and 15.0.")
-    if not 0.0 <= blood_glucose <= 500.0:
-        raise ValueError("Blood glucose must be between 0.0 and 500.0.")
-
-
-def build_feature_vector(
-    gender: str,
-    age: int,
-    hypertension: int,
-    heart_disease: int,
-    smoking_history: str,
-    bmi: float,
-    hba1c: float,
-    blood_glucose: float,
-    gender_encoder: Any,
-    smoking_encoder: Any,
-) -> list[float]:
-    validate_inputs(age, bmi, hba1c, blood_glucose)
-    return [
-        encode_label(gender_encoder, gender, "gender"),
-        int(age),
-        int(hypertension),
-        int(heart_disease),
-        encode_label(smoking_encoder, smoking_history, "smoking history"),
-        float(bmi),
-        float(hba1c),
-        float(blood_glucose),
-    ]
-
-
-def app_styles() -> str:
-    return """
+model=pickle.load(open('model.save','rb'))
+scaler=pickle.load(open('scaler.save','rb'))
+gender=pickle.load(open('gender.save','rb'))
+smoking=pickle.load(open('smoking.save','rb'))
+def main():
+    st.set_page_config(
+        page_title="Diabetes Predictor",
+        page_icon="🩺",
+        layout="wide"
+    )
+    
+    st.markdown("""
     <style>
-    .stApp { background: #f0f6ff; }
-    .block-container { padding: 32px 40px; background: #ffffff; border-radius: 20px; }
-    .form-section { background: #f7fbff; border-radius: 18px; padding: 24px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.05); }
-    .stButton > button { border-radius: 14px !important; }
-    .hero-title { font-size: 42px !important; color: #003e6b !important; }
-    .hero-subtitle { font-size: 18px !important; color: #264653 !important; }
+    /* ========== MAIN APP BACKGROUND ========== */
+    .stApp {
+        background: #f8f9fa;
+    }
+
+    /* Remove default padding */
+    .main > div {
+        padding: 0;
+    }
+
+    /* ========== HEADER/HERO SECTION ========== */
+    .hero-section {
+        background: linear-gradient(135deg, #0088cc 0%, #00b4d8 25%, #90e0ef 50%, #caf0f8 75%, #e89b9b 100%);
+        padding: 60px 40px;
+        border-radius: 0;
+        color: white;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+        min-height: 500px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .hero-section::before {
+        content: '';
+        position: absolute;
+        bottom: -2px;
+        left: 0;
+        width: 100%;
+        height: 100px;
+        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 120"><path d="M0,50 Q300,0 600,50 T1200,50 L1200,120 L0,120 Z" fill="%23f8f9fa"/></svg>');
+        background-size: cover;
+        background-repeat: no-repeat;
+    }
+
+    .hero-content {
+        position: relative;
+        z-index: 1;
+        max-width: 800px;
+    }
+
+    .hero-title {
+        font-size: 56px !important;
+        font-weight: 900 !important;
+        margin-bottom: 20px !important;
+        text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
+        line-height: 1.2 !important;
+    }
+
+    .hero-subtitle {
+        font-size: 20px !important;
+        font-weight: 500 !important;
+        margin-bottom: 30px !important;
+        line-height: 1.6 !important;
+        opacity: 0.95;
+    }
+
+    /* ========== MAIN APP BACKGROUND ========== */
+    .stApp {
+        background: #f8f9fa !important;
+    }
+
+    /* ========== MAIN CONTAINER ========== */
+    .block-container {
+        background: white !important;
+        border-radius: 0;
+        padding: 40px 60px !important;
+        box-shadow: none;
+        border: none;
+        margin-top: 0 !important;
+    }
+
+    /* ========== FORM SECTION ========== */
+    .form-section {
+        background: white;
+        padding: 40px;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        margin: 40px 0;
+    }
+
+    .section-title {
+        font-size: 28px !important;
+        font-weight: 800 !important;
+        color: #0088cc !important;
+        margin-bottom: 30px !important;
+        border-bottom: 3px solid #00b4d8;
+        padding-bottom: 15px;
+    }
+
+    /* ========== TYPOGRAPHY ========== */
+    h1 {
+        text-align: center;
+        font-size: 56px !important;
+        color: white !important;
+        font-weight: 900;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        margin-bottom: 20px !important;
+    }
+
+    h2, h3 {
+        color: #0088cc !important;
+        font-weight: 800;
+        margin-top: 20px !important;
+    }
+
+    p, label {
+        color: #333333 !important;
+        font-weight: 600;
+        font-size: 16px;
+    }
+
+    /* ========== RADIO BUTTONS ========== */
+    .stRadio > label {
+        font-weight: 700 !important;
+        color: #0088cc !important;
+        font-size: 16px !important;
+        margin-bottom: 15px !important;
+    }
+
+    .stRadio [role="radiogroup"] {
+        background: linear-gradient(135deg, #f0f7ff 0%, #e0f2ff 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 2px solid #00b4d8;
+        gap: 15px;
+    }
+
+    .stRadio [role="radio"] {
+        accent-color: #0088cc !important;
+    }
+
+    /* ========== SLIDERS ========== */
+    .stSlider > label {
+        font-weight: 700 !important;
+        color: #0088cc !important;
+        font-size: 16px !important;
+    }
+
+    .stSlider [data-testid="stSlider"] {
+        background: linear-gradient(135deg, #f0f7ff 0%, #e0f2ff 100%);
+        padding: 20px;
+        border-radius: 12px;
+        border: 2px solid #00b4d8;
+    }
+
+    /* ========== NUMBER INPUTS ========== */
+    .stNumberInput > label {
+        font-weight: 700 !important;
+        color: #0088cc !important;
+        font-size: 16px !important;
+    }
+
+    .stNumberInput input {
+        background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%) !important;
+        border: 2px solid #00b4d8 !important;
+        border-radius: 10px !important;
+        padding: 14px 16px !important;
+        font-size: 16px !important;
+        color: #333 !important;
+        transition: all 0.3s ease;
+        font-weight: 600;
+    }
+
+    .stNumberInput input:focus {
+        background: #ffffff !important;
+        border-color: #0088cc !important;
+        box-shadow: 0 0 20px rgba(0, 136, 204, 0.3);
+    }
+
+    /* ========== BUTTONS ========== */
+    .stButton > button {
+        background: linear-gradient(135deg, #0088cc 0%, #00b4d8 100%);
+        color: white !important;
+        padding: 16px 40px !important;
+        border-radius: 12px !important;
+        border: none !important;
+        font-weight: 800 !important;
+        font-size: 17px !important;
+        width: 100% !important;
+        transition: all 0.3s ease;
+        box-shadow: 0 6px 20px rgba(0, 136, 204, 0.3);
+    }
+
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #00b4d8 0%, #0088cc 100%);
+        transform: translateY(-3px);
+        box-shadow: 0 10px 30px rgba(0, 136, 204, 0.5);
+    }
+
+    .stButton > button:active {
+        transform: translateY(-1px);
+    }
+
+    /* ========== SUCCESS & ERROR MESSAGES ========== */
+    .stSuccess {
+        background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, rgba(76, 175, 80, 0.05) 100%) !important;
+        border-left: 5px solid #4caf50 !important;
+        border-radius: 8px !important;
+        padding: 16px !important;
+        color: #2e7d32 !important;
+        font-weight: 700;
+        font-size: 16px;
+    }
+
+    .stError {
+        background: linear-gradient(135deg, rgba(244, 67, 54, 0.15) 0%, rgba(244, 67, 54, 0.05) 100%) !important;
+        border-left: 5px solid #f44336 !important;
+        border-radius: 8px !important;
+        padding: 16px !important;
+        color: #c62828 !important;
+        font-weight: 700;
+        font-size: 16px;
+    }
+
+    /* ========== INFO MESSAGES ========== */
+    .stInfo {
+        background: linear-gradient(135deg, rgba(33, 150, 243, 0.15) 0%, rgba(33, 150, 243, 0.05) 100%) !important;
+        border-left: 5px solid #2196f3 !important;
+        border-radius: 8px !important;
+        padding: 16px !important;
+        color: #1565c0 !important;
+        font-weight: 700;
+        font-size: 16px;
+    }
+
+    /* ========== IMAGE STYLING ========== */
+    img {
+        border-radius: 12px;
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+    }
+
+    .floating-tooltip {
+        position: fixed;
+        top: 50%;
+        right: -300px;
+        width: 280px;
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+        transition: right 0.4s ease;
+        z-index: 999;
+        border-left: 4px solid #0088cc;
+    }
+
+    .floating-tooltip.show {
+        right: 20px;
+    }
+
+    .floating-tooltip h4 {
+        color: #0088cc;
+        margin-bottom: 10px;
+        font-size: 16px;
+    }
+
+    .floating-tooltip p {
+        color: #666;
+        font-size: 14px;
+        line-height: 1.5;
+    }
+
+    .floating-stats {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        z-index: 998;
+        border: 1px solid rgba(0, 136, 204, 0.2);
+    }
+
+    .stat-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 8px;
+        font-size: 14px;
+    }
+
+    .stat-item:last-child {
+        margin-bottom: 0;
+    }
+
+    .stat-icon {
+        width: 20px;
+        margin-right: 8px;
+        opacity: 0.7;
+    }
+
+    .floating-nav {
+        position: fixed;
+        top: 50%;
+        left: 20px;
+        transform: translateY(-50%);
+        z-index: 997;
+    }
+
+    .nav-button {
+        display: block;
+        width: 50px;
+        height: 50px;
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(10px);
+        border: 2px solid #0088cc;
+        border-radius: 50%;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        color: #0088cc;
+        text-decoration: none;
+    }
+
+    .nav-button:hover {
+        background: #0088cc;
+        color: white;
+        transform: scale(1.1);
+        box-shadow: 0 4px 15px rgba(0, 136, 204, 0.3);
+    }
+
+    /* ========== ANIMATED FLOATING CARDS ========== */
+    .floating-card {
+        animation: float 6s ease-in-out infinite;
+        margin-bottom: 20px;
+    }
+
+    .floating-card:nth-child(2) {
+        animation-delay: 2s;
+    }
+
+    .floating-card:nth-child(3) {
+        animation-delay: 4s;
+    }
+
+    @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+    }
+
+    /* ========== FLOATING HEALTH TIPS ========== */
+    .health-tip {
+        position: absolute;
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(10px);
+        border-radius: 8px;
+        padding: 12px 16px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        font-size: 14px;
+        color: #333;
+        border-left: 3px solid #4caf50;
+        opacity: 0;
+        animation: fadeInOut 8s infinite;
+    }
+
+    .health-tip.show {
+        opacity: 1;
+    }
+
+    @keyframes fadeInOut {
+        0%, 100% { opacity: 0; transform: translateY(10px); }
+        10%, 90% { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ========== FLOATING PARTICLES ========== */
+    .floating-particles {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+        overflow: hidden;
+    }
+
+    .particle {
+        position: absolute;
+        background: rgba(0, 136, 204, 0.1);
+        border-radius: 50%;
+        animation: particleFloat 15s linear infinite;
+    }
+
+    .particle:nth-child(1) { width: 4px; height: 4px; left: 10%; animation-delay: 0s; }
+    .particle:nth-child(2) { width: 6px; height: 6px; left: 20%; animation-delay: 2s; }
+    .particle:nth-child(3) { width: 3px; height: 3px; left: 30%; animation-delay: 4s; }
+    .particle:nth-child(4) { width: 5px; height: 5px; left: 40%; animation-delay: 6s; }
+    .particle:nth-child(5) { width: 4px; height: 4px; left: 50%; animation-delay: 8s; }
+    .particle:nth-child(6) { width: 6px; height: 6px; left: 60%; animation-delay: 10s; }
+    .particle:nth-child(7) { width: 3px; height: 3px; left: 70%; animation-delay: 12s; }
+    .particle:nth-child(8) { width: 5px; height: 5px; left: 80%; animation-delay: 14s; }
+
+    @keyframes particleFloat {
+        0% { transform: translateY(100vh) rotate(0deg); }
+        100% { transform: translateY(-100px) rotate(360deg); }
+    }
+
     </style>
-    """
-
-
-def render_app() -> None:
-    # suppress known sklearn harmless warnings that confuse users
-    warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
-    warnings.filterwarnings("ignore", message="X does not have valid feature names")
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    st.set_page_config(page_title="Diabetes Predictor", page_icon="🩺", layout="wide")
-    st.markdown(app_styles(), unsafe_allow_html=True)
-
-    st.markdown(
-        """
-        <div style='padding: 48px 32px; background: linear-gradient(135deg, #0077b6 0%, #00b4d8 100%); border-radius: 24px; color: white; text-align: center;'>
-            <h1 class='hero-title'>Diabetes Risk Predictor</h1>
-            <p class='hero-subtitle'>Enter your medical and lifestyle information for a quick local diabetes risk estimate.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    """,
+    unsafe_allow_html=True
     )
 
-    st.write("---")
+    # Hero Section
+    st.markdown("""
+    <div class="hero-section">
+        <div class="hero-content">
+            <h1 class="hero-title">Check Your Diabetes Risk</h1>
+            <p class="hero-subtitle">
+                Get an instant health prediction based on your medical information. 
+                Our advanced AI model analyzes your data to help you understand your diabetes risk level.
+            </p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    app_image = load_app_image()
-    if app_image is not None:
-        st.sidebar.image(app_image, caption="Diabetes risk assessment", width=300)
+    # Floating particles background
+    st.markdown("""
+    <div class="floating-particles">
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+        <div class="particle"></div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    try:
-        model, scaler, gender_encoder, smoking_encoder = load_model_resources()
-    except FileNotFoundError as exc:
-        st.error(str(exc))
-        st.warning("Ensure model.save, scaler.save, gender.save, and smoking.save are present in the app folder.")
-        return
-    except Exception as exc:
-        st.error("Unable to load model resources.")
-        st.write(exc)
-        return
+    # Floating stats
+    st.markdown("""
+    <div class="floating-stats">
+        <div class="stat-item">
+            <span class="stat-icon">📊</span>
+            <span>AI-Powered Analysis</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-icon">⚡</span>
+            <span>Instant Results</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-icon">🛡️</span>
+            <span>Privacy Protected</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    left, right = st.columns([3, 2])
+    # Floating navigation
+    st.markdown("""
+    <div class="floating-nav">
+        <button class="nav-button" onclick="document.querySelector('.hero-section').scrollIntoView({behavior: 'smooth'})">🏠</button>
+        <button class="nav-button" onclick="document.querySelectorAll('.form-section')[0].scrollIntoView({behavior: 'smooth'})">👤</button>
+        <button class="nav-button" onclick="document.querySelectorAll('.form-section')[1].scrollIntoView({behavior: 'smooth'})">🚬</button>
+        <button class="nav-button" onclick="document.querySelectorAll('.form-section')[2].scrollIntoView({behavior: 'smooth'})">🔬</button>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with left:
-        st.markdown("<div class='form-section'>", unsafe_allow_html=True)
-        st.subheader("👤 Personal Information")
-        gender = st.radio("Gender", ["Female", "Male"], horizontal=True)
-        age = st.slider("Age", min_value=0, max_value=100, value=30)
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
 
-        st.subheader("❤️ Medical Conditions")
-        hypertension = st.radio("Hypertension", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", horizontal=True)
-        heart_disease = st.radio("Heart disease", [0, 1], format_func=lambda x: "No" if x == 0 else "Yes", horizontal=True)
+    # Form Section
+    st.markdown('<div class="form-section floating-card">', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 👤 Personal Information")
+        gendere=st.radio("Select Gender",["Female","Male"])
+        if gendere=="Female":
+            st.success("✓ Selected: **Female**")
+        else:
+            st.success("✓ Selected: **Male**")
+        
+        age = st.slider("How old are you?", 0, 100, 25)
+        st.info(f"📅 Your age: **{age}** years old")
+    
+    with col2:
+        st.markdown("### ❤️ Medical Conditions")
+        hypertension=st.radio("Do you have hypertension?", [1, 0], format_func=lambda x: "Yes" if x==1 else "No")
+        if hypertension==1:
+            st.error("⚠ You have hypertension")
+        else:
+            st.success("✓ No hypertension")
+        
+        heart_disease=st.radio("Do you have heart disease?", [1, 0], format_func=lambda x: "Yes" if x==1 else "No")
+        if heart_disease==1:
+            st.error("⚠ You have heart disease")
+        else:
+            st.success("✓ No heart disease")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="form-section floating-card">', unsafe_allow_html=True)
+    
+    st.markdown("### 🚬 Lifestyle Information")
+    smoking_history=st.radio("Do you have smoking history?", ["never","ever","former","current","unknown"])
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    st.markdown('<div class="form-section floating-card">', unsafe_allow_html=True)
+    
+    st.markdown("### 🔬 Medical Metrics")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        bmi = st.number_input("Insert your BMI", min_value=0.0, max_value=100.0, value=25.0, step=0.1)
+        st.info(f"📊 Your BMI: **{bmi:.2f}**")
+    
+    with col2:
+        HbA1c_level = st.number_input("Enter your HbA1c Level", min_value=0.0, max_value=15.0, value=5.5, step=0.1)
+        st.info(f"📈 Your HbA1c: **{HbA1c_level:.2f}%**")
+    
+    with col3:
+        blood_glucose_level = st.number_input("Enter your Blood Glucose Level", min_value=0.0, max_value=500.0, value=100.0, step=1.0)
+        st.info(f"🩸 Your Glucose: **{blood_glucose_level:.0f}** mg/dL")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
 
-        st.subheader("🚬 Smoking History")
-        smoking_history = st.selectbox("Smoking history", SMOKING_HISTORY_OPTIONS)
+    ge=gender.transform([gendere])[0]
+    smk=smoking.transform([smoking_history])[0]
 
-        st.subheader("🔬 Health Metrics")
-        bmi = st.number_input("Body Mass Index (BMI)", min_value=0.0, max_value=100.0, value=25.0, step=0.1)
-        hba1c = st.number_input("HbA1c level", min_value=0.0, max_value=15.0, value=5.5, step=0.1)
-        blood_glucose = st.number_input("Blood glucose level", min_value=0.0, max_value=500.0, value=100.0, step=1.0)
-        st.markdown("</div>", unsafe_allow_html=True)
+    f=[[ge,age,hypertension,heart_disease,smk,bmi,HbA1c_level,blood_glucose_level]] 
 
-    with right:
-        st.markdown("<div class='form-section'>", unsafe_allow_html=True)
-        st.subheader("How it works")
-        st.write(
-            "The app loads a pre-trained model and transformer from local files, so no data is sent externally. "
-            "It then uses your inputs to estimate the diabetes risk." 
-        )
-        st.info("Required files: model.save, scaler.save, gender.save, smoking.save")
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader("Sample scenarios")
-        sample_table = [
-            {
-                "Case": case["label"],
-                "Gender": case["gender"],
-                "Age": case["age"],
-                "Smoker": case["smoking_history"],
-                "BMI": case["bmi"],
-                "HbA1c": case["hba1c"],
-                "Glucose": case["blood_glucose"],
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        a=st.button("🏥 Get Prediction", use_container_width=True)
+
+    # Floating Health Tips
+    st.markdown("""
+    <div class="floating-tooltip" id="healthTip">
+        <h4>💡 Health Tip</h4>
+        <p>Maintain a healthy BMI between 18.5-24.9, regular exercise, and balanced diet to reduce diabetes risk.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # JavaScript to show/hide floating tooltip
+    st.markdown("""
+    <script>
+        let tipShown = false;
+        setInterval(() => {
+            const tip = document.getElementById('healthTip');
+            if (tip) {
+                tip.classList.toggle('show');
             }
-            for case in SAMPLE_INPUTS
-        ]
-        st.table(sample_table)
-        if app_image is not None:
-            st.image(app_image, width=300)
+        }, 10000);
+    </script>
+    """, unsafe_allow_html=True)
+    
+    if a:
+        s=scaler.transform(f)
+        pred=model.predict(s)
+        
+        st.markdown("<div style='height: 30px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
+        
+        if pred[0]==1:
+            st.markdown("""
+            <div style='text-align: center;'>
+                <h2 style='color: #e74c3c; font-size: 32px;'>⚠️ Diabetes Risk Detected</h2>
+                <p style='font-size: 18px; color: #333; margin: 20px 0;'>
+                    Based on your medical information, our analysis suggests a <b>HIGH RISK</b> of diabetes.
+                </p>
+                <p style='font-size: 16px; color: #666;'>
+                    We recommend consulting with a healthcare professional for proper diagnosis and guidance.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.error("🔴 **Diabetes Detected** - Please seek medical consultation")
+        else:
+            st.markdown("""
+            <div style='text-align: center;'>
+                <h2 style='color: #4caf50; font-size: 32px;'>✅ Low Diabetes Risk</h2>
+                <p style='font-size: 18px; color: #333; margin: 20px 0;'>
+                    Based on your medical information, our analysis suggests a <b>LOW RISK</b> of diabetes.
+                </p>
+                <p style='font-size: 16px; color: #666;'>
+                    Continue maintaining a healthy lifestyle and regular check-ups.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.success("🟢 **No Diabetes Detected** - Keep up the good health!")
+        
         st.markdown("</div>", unsafe_allow_html=True)
-
-    if st.button("🏥 Get Prediction", use_container_width=True):
-        try:
-            features = build_feature_vector(
-                gender,
-                age,
-                hypertension,
-                heart_disease,
-                smoking_history,
-                bmi,
-                hba1c,
-                blood_glucose,
-                gender_encoder,
-                smoking_encoder,
-            )
-            # Try to transform using feature names when available to avoid warnings
-            def safe_transform(scaler, features_list):
-                try:
-                    if hasattr(scaler, "feature_names_in_"):
-                        cols = list(getattr(scaler, "feature_names_in_"))
-                        df = pd.DataFrame([features_list], columns=cols)
-                        return scaler.transform(df)
-                except Exception:
-                    logger.exception("feature-name transform failed, falling back to array")
-                return scaler.transform([features_list])
-
-            def safe_predict(model, X):
-                try:
-                    # if model was trained with feature names, providing DataFrame helps
-                    if isinstance(X, (pd.DataFrame,)):
-                        return model.predict(X)[0]
-                except Exception:
-                    logger.exception("DataFrame predict failed, falling back to array")
-                return model.predict(X)[0]
-
-            scaled = safe_transform(scaler, features)
-            prediction = safe_predict(model, scaled)
-
-            if prediction == 1:
-                st.error("⚠️ High diabetes risk detected. Please consult a healthcare professional.")
-            else:
-                st.success("✅ Low diabetes risk detected. Keep up a healthy lifestyle.")
-
-            st.write("---")
-            st.subheader("Health recommendation")
-            st.write(
-                "This prediction is for informational purposes only. Maintain a balanced diet, stay active, and consult your doctor for medical advice."
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-        except Exception as exc:
-            st.error("Prediction failed. Please verify your inputs and try again.")
-            st.write(exc)
-
-
-if __name__ == "__main__":
-    render_app()
+main()
